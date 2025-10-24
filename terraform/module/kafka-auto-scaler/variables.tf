@@ -20,8 +20,23 @@ variable "project_id" {
   type        = string
 }
 
+variable "project_name" {
+  description = "Project Name"
+  type        = string
+}
+
+variable "environment" {
+  description = "Project environment"
+  type        = string
+}
+
 variable "region" {
   description = "The Google Cloud region for deployment."
+  type        = string
+}
+
+variable "zone" {
+  description = "The Google Cloud zone for deployment."
   type        = string
 }
 
@@ -38,16 +53,6 @@ variable "topic_id" {
 
 variable "consumer_group_id" {
   description = "The Kafka Consumer Group ID associated with the topic that the autoscaler will monitor."
-  type        = string
-}
-
-variable "admin_client_secret_name" {
-  description = "The name of the existing Secret Manager secret containing Kafka admin client properties (e.g., kafka-client-properties)."
-  type        = string
-}
-
-variable "scaler_config_secret_name" {
-  description = "The name of the existing Secret Manager secret containing the scaler's YAML configuration (specifying target, metrics, behavior etc.).	"
   type        = string
 }
 
@@ -93,7 +98,6 @@ variable "scheduler_schedule" {
 variable "tasks_service_account_name" {
   description = "The short name used to create the Service Account for the Cloud Tasks invoker identity. Email will be <name>@<project_id>.iam.gserviceaccount.com"
   type        = string
-  default     = "kafka-tasks-invoker"
 }
 
 variable "scaler_sa_name_prefix" {

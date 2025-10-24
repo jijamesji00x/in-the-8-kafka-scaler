@@ -1,0 +1,4 @@
+.env*
+!.env.template
+kafka_client_config.txt
+scaling_config.yaml

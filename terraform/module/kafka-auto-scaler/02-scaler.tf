@@ -1,40 +1,10 @@
-/*
- * Copyright 2025 Google LLC
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *      http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- *
- */
-
-terraform {
-  required_version = ">= 1.3"
-
-  required_providers {
-    google = {
-      source  = "hashicorp/google"
-      version = "~> 6.0"
-    }
-    time = {
-      source  = "hashicorp/time"
-      version = "~> 0.9" # Or latest compatible version
-    }
-  }
-}
 
 locals {
-  tasks_sa_id        = coalesce(var.tasks_service_account_name, "${var.scaler_service_name}-tasks")
+  tasks_sa_id        = coalesce("${var.project_name}-${var.environment}-${var.tasks_service_account_name}", "${var.scaler_service_name}-tasks")
   scaler_sa_id       = format("%s%s-sa", var.scaler_sa_name_prefix, var.scaler_service_name)
-  scheduler_job_name = "${var.scaler_service_name}-cron"
-  scheduler_sa_id    = format("%s%s-sa", var.scheduler_sa_name_prefix, local.scheduler_job_name)
+  scheduler_job_name = "${var.project_name}-${var.environment}-${var.scaler_service_name}-cron"
+  scheduler_sa_name  = "${var.project_name}-${var.environment}-scaler"
+  scheduler_sa_id    = format("%s%s-sa", var.scheduler_sa_name_prefix, local.scheduler_sa_name)
 
   tasks_sa_email     = "${local.tasks_sa_id}@${var.project_id}.iam.gserviceaccount.com"
   scaler_sa_email    = "${local.scaler_sa_id}@${var.project_id}.iam.gserviceaccount.com"
@@ -42,7 +12,6 @@ locals {
 
   # Environment variables for the scaler Cloud Run service
   scaler_env_vars = {
-    KAFKA_TOPIC_ID                = var.topic_id
     CONSUMER_GROUP_ID             = var.consumer_group_id
     CYCLE_SECONDS                 = tostring(var.scaler_cycle_seconds)
     INVOKER_SERVICE_ACCOUNT_EMAIL = local.tasks_sa_email
@@ -58,7 +27,7 @@ data "google_project" "project" {
 resource "google_cloud_tasks_queue" "queue" {
   project  = var.project_id
   location = var.region
-  name     = var.cloud_tasks_queue_name
+  name     = "${var.project_name}-${var.environment}-${var.cloud_tasks_queue_name}"
 }
 
 resource "google_service_account" "tasks_sa" {
@@ -79,7 +48,7 @@ resource "google_service_account" "scaler_sa" {
 
 # Grant Scaler SA permission to impersonate Consumer SA
 resource "google_service_account_iam_member" "scaler_impersonate_consumer" {
-  service_account_id = var.consumer_sa_email # This needs the projects/... format
+  service_account_id = "projects/${var.project_id}/serviceAccounts/${var.consumer_sa_email}" # This needs the projects/... format
   role               = "roles/iam.serviceAccountUser"
   member             = "serviceAccount:${local.scaler_sa_email}"
 }
@@ -94,7 +63,7 @@ resource "google_project_iam_member" "scaler_artifactregistry_reader" {
 # Grant Scaler SA permission to access scaler config secret
 resource "google_secret_manager_secret_iam_member" "scaler_access_scaler_config" {
   project   = var.project_id
-  secret_id = var.scaler_config_secret_name
+  secret_id = google_secret_manager_secret.secret_manager_kafka_scaler_scaling_config.secret_id
   role      = "roles/secretmanager.secretAccessor"
   member    = "serviceAccount:${local.scaler_sa_email}"
 }
@@ -102,7 +71,7 @@ resource "google_secret_manager_secret_iam_member" "scaler_access_scaler_config"
 # Grant Scaler SA permission to access admin client secret
 resource "google_secret_manager_secret_iam_member" "scaler_access_admin_client" {
   project   = var.project_id
-  secret_id = var.admin_client_secret_name
+  secret_id = google_secret_manager_secret.secret_manager_kafka_client_config.secret_id
   role      = "roles/secretmanager.secretAccessor"
   member    = "serviceAccount:${local.scaler_sa_email}"
 }
@@ -175,11 +144,14 @@ resource "time_sleep" "wait_for_scaler_sa_propagation" {
 }
 
 # --- Deploy Kafka Autoscaler Cloud Run Service ---
+data "google_secret_manager_secret_version" "kafka_client_config_latest" {
+  secret = google_secret_manager_secret.secret_manager_kafka_client_config.secret_id
+}
 
 resource "google_cloud_run_v2_service" "scaler_service" {
   project  = var.project_id
   location = var.region
-  name     = var.scaler_service_name
+  name     = "${var.project_name}-${var.environment}-cloud-run-kafka-scaler"
   labels = merge(
     {
       "created-by" = "scaler-kafka"
@@ -229,21 +201,21 @@ resource "google_cloud_run_v2_service" "scaler_service" {
       }
     }
 
-
     volumes {
       name = "kafka-config"
       secret {
-        secret = var.admin_client_secret_name
+        secret = "${var.project_name}-${var.environment}-kafka-scaler-client-config"
         items {
           path    = "kafka-client-properties"
-          version = var.admin_client_secret_version
+          version = data.google_secret_manager_secret_version.kafka_client_config_latest.version
         }
       }
     }
+
     volumes {
       name = "scaler-config"
       secret {
-        secret = var.scaler_config_secret_name
+        secret = "${var.project_name}-${var.environment}-kafka-scaler-scaling-config"
         items {
           path    = "scaling"
           version = var.scaler_config_secret_version
@@ -255,13 +227,6 @@ resource "google_cloud_run_v2_service" "scaler_service" {
       image          = var.scaler_image_path
       base_image_uri = "us-central1-docker.pkg.dev/serverless-runtimes/google-22/runtimes/java17"
 
-      dynamic "env" {
-        for_each = local.scaler_env_vars.KAFKA_TOPIC_ID != null ? [1] : []
-        content {
-          name  = "KAFKA_TOPIC_ID"
-          value = local.scaler_env_vars.KAFKA_TOPIC_ID
-        }
-      }
       env {
         name  = "CONSUMER_GROUP_ID"
         value = local.scaler_env_vars.CONSUMER_GROUP_ID
@@ -337,7 +302,7 @@ resource "google_cloud_scheduler_job" "scaler_trigger" {
   region    = var.region
   name      = local.scheduler_job_name
   schedule  = var.scheduler_schedule
-  time_zone = "Etc/UTC"
+  time_zone = "Asia/Bangkok"
 
   http_target {
     uri = google_cloud_run_v2_service.scaler_service.uri # Use the URI from the created service
