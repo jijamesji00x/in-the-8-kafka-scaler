@@ -19,6 +19,6 @@ steps:
     entrypoint: 'bazel'
     args: ['build', '//java/com/google/cloud/run/kafkascaler:kafka_scaler_binary']
   - name: 'gcr.io/cloud-builders/docker'
-    args: ['push', '%ARTIFACT_REGISTRY_IMAGE%']
+    args: ['push', 'asia-southeast1-docker.pkg.dev/in-the-8ight-uat/in-the-8ight-uat-kafka-scaler/in-the-8ight-kafka-scaler']
 images:
-  - '%ARTIFACT_REGISTRY_IMAGE%'
+  - 'asia-southeast1-docker.pkg.dev/in-the-8ight-uat/in-the-8ight-uat-kafka-scaler/in-the-8ight-kafka-scaler'
